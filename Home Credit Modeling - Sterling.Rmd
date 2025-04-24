@@ -1,0 +1,648 @@
+---
+title: "EDA - Home Credit"
+author: "Sterling LeDuc - u0767552"
+date: "02/16/2025"
+output:
+  html_document:
+    toc: true
+    title: "Contents"
+  pdf_document:
+    toc: true
+    title: "Contents"
+execute:
+  include: true
+  eval: true    
+  warning: false
+  message: false
+---
+
+
+# Introduction
+
+Many trustworthy and financially stable individuals have trouble getting approved for loans because
+they have insufficient (or non-existent) credit histories. This can cause lenders to lose valuable business
+and borrowers to miss out on financial opportunities.
+
+Home Credit has devised a strategy to broaden the scope of lending inclusion by utilizing alternative
+financial data, including transactional data, to find credit-lacking clients that are capable of loan
+repayment. This can grant them additional business that other lenders would otherwise miss out on.
+
+## Data Review Goals
+
+Questions we want to ask as we examine the data:
+  - Are there any values that don't make sense?
+  - Are there outliers that might skew the data?
+  - Are there missing values? If so, how should they be handled?
+  - Are the data types appropriate?
+  - Which variables affect the target the most?
+  - Are there duplicate variables?
+  - Are there variables we can ignore?
+  
+Primary goal is to generate predictions on the test data set and validate our predictions with a Kaggle score. The higher our accuracy the better.
+
+# Loading Packages and Data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(dplyr)
+library(caret)
+library(rminer)
+library(rmarkdown)
+library(skimr)
+library(Hmisc)
+library(pROC)
+
+```
+
+# Loading Main Data 
+
+Note that the file sizes are too large to manipulate, so we will sample the some of the data instead.
+
+```{r loading data}
+
+#Loading full test and train data
+
+test <- read_csv("application_test.csv")
+train <- read_csv("application_train.csv")
+
+```
+
+## Sampling and Examining Data
+
+In this section we will take a broad look at the data.
+
+```{r, warning = F, echo = TRUE}
+
+#Combining data sets to make cleaning easier:
+
+test |> mutate(TARGET = 2) -> test
+
+train_samp <- rbind(train, test)
+
+#Showing first 10 lines of the data:
+
+train_samp |> head(n=10)
+
+skim(train_samp)
+
+```
+
+
+
+## Finding Outliers
+
+In this section we will take a closer look at potential outliers.
+
+```{r examining data with plots}
+
+#Scatterplots and tables
+
+train_samp |> count(CNT_CHILDREN) |> group_by(n) |> ggplot(aes(x = CNT_CHILDREN, y = n)) + geom_point()
+train_samp |> count(AMT_INCOME_TOTAL) |> group_by(n) |> ggplot(aes(x = AMT_INCOME_TOTAL, y = n)) + geom_point()
+train_samp |> count(AMT_CREDIT) |> group_by(n) |> ggplot(aes(x = AMT_CREDIT, y = n)) + geom_point()
+train_samp |> count(AMT_ANNUITY) |> group_by(n) |> ggplot(aes(x = AMT_ANNUITY, y = n)) + geom_point()
+train_samp |> count(AMT_GOODS_PRICE) |> group_by(n) |> ggplot(aes(x = AMT_GOODS_PRICE, y = n)) + geom_point()
+train_samp |> count(DAYS_EMPLOYED) |> group_by(n) |> ggplot(aes(x = DAYS_EMPLOYED, y = n)) + geom_point()
+train_samp |> count(CNT_FAM_MEMBERS) |> group_by(n) 
+train_samp |> count(OBS_30_CNT_SOCIAL_CIRCLE) |> group_by(n)
+train_samp |> count(OBS_60_CNT_SOCIAL_CIRCLE) |> group_by(n)
+train_samp |> count(DEF_30_CNT_SOCIAL_CIRCLE) |> group_by(n)
+train_samp |> count(DEF_60_CNT_SOCIAL_CIRCLE) |> group_by(n)
+train_samp |> count(OCCUPATION_TYPE) |> group_by(n)
+
+
+
+```
+
+There are obvious outliers in AMT_INCOME_TOTAL, AMT_CREDIT, DAYS_EMPLOYED, and AMT_GOODS_PRICE. Instead of filtering these, which will eliminate rows, we will use log transformations in the model to scale the column.
+
+## Replacing Missing Numerical Values
+
+Here we will replace missing values in the main data.
+
+```{r replace train samp with median}
+
+# Replacing values with the median:
+
+
+train_samp <- train_samp |> 
+mutate(AMT_GOODS_PRICE = replace_na(AMT_GOODS_PRICE, median(AMT_GOODS_PRICE, na.rm = T)), OWN_CAR_AGE = replace_na(OWN_CAR_AGE, median(OWN_CAR_AGE, na.rm = T)), EXT_SOURCE_1 = replace_na(EXT_SOURCE_1, median(EXT_SOURCE_1, na.rm = T)), EXT_SOURCE_2 = replace_na(EXT_SOURCE_2, median(EXT_SOURCE_2, na.rm = T)), EXT_SOURCE_3 = replace_na(EXT_SOURCE_3, median(EXT_SOURCE_3, na.rm = T)), OBS_30_CNT_SOCIAL_CIRCLE = replace_na(OBS_30_CNT_SOCIAL_CIRCLE, median(OBS_30_CNT_SOCIAL_CIRCLE, na.rm = T)), OBS_60_CNT_SOCIAL_CIRCLE = replace_na(OBS_60_CNT_SOCIAL_CIRCLE, median(OBS_60_CNT_SOCIAL_CIRCLE, na.rm = T)), DEF_30_CNT_SOCIAL_CIRCLE = replace_na(DEF_30_CNT_SOCIAL_CIRCLE, median(DEF_30_CNT_SOCIAL_CIRCLE, na.rm = T)), DEF_60_CNT_SOCIAL_CIRCLE = replace_na(DEF_60_CNT_SOCIAL_CIRCLE, median(DEF_60_CNT_SOCIAL_CIRCLE, na.rm = T)), AMT_REQ_CREDIT_BUREAU_HOUR = replace_na(AMT_REQ_CREDIT_BUREAU_HOUR, median(AMT_REQ_CREDIT_BUREAU_HOUR, na.rm = T)), AMT_REQ_CREDIT_BUREAU_DAY = replace_na(AMT_REQ_CREDIT_BUREAU_DAY, median(AMT_REQ_CREDIT_BUREAU_DAY, na.rm = T)), AMT_REQ_CREDIT_BUREAU_WEEK = replace_na(AMT_REQ_CREDIT_BUREAU_WEEK, median(AMT_REQ_CREDIT_BUREAU_WEEK, na.rm = T)), AMT_REQ_CREDIT_BUREAU_MON = replace_na(AMT_REQ_CREDIT_BUREAU_MON, median(AMT_REQ_CREDIT_BUREAU_MON, na.rm = T)), AMT_REQ_CREDIT_BUREAU_QRT = replace_na(AMT_REQ_CREDIT_BUREAU_QRT, median(AMT_REQ_CREDIT_BUREAU_QRT, na.rm = T)), AMT_REQ_CREDIT_BUREAU_YEAR = replace_na(AMT_REQ_CREDIT_BUREAU_YEAR, median(AMT_REQ_CREDIT_BUREAU_YEAR, na.rm = T)))
+
+# Replacing missing values with the median for data on building where client lives. This data should exist for most, if not all people, so the median should be a sufficient estimate. 
+
+train_samp <- train_samp |> 
+mutate(APARTMENTS_AVG = replace_na(APARTMENTS_AVG, median(APARTMENTS_AVG, na.rm = T)), BASEMENTAREA_AVG = replace_na(BASEMENTAREA_AVG, median(BASEMENTAREA_AVG, na.rm = T)), YEARS_BEGINEXPLUATATION_AVG = replace_na(YEARS_BEGINEXPLUATATION_AVG, median(YEARS_BEGINEXPLUATATION_AVG, na.rm = T)), YEARS_BUILD_AVG = replace_na(YEARS_BUILD_AVG, median(YEARS_BUILD_AVG, na.rm = T)), COMMONAREA_AVG = replace_na(COMMONAREA_AVG, median(COMMONAREA_AVG, na.rm = T)), ENTRANCES_AVG = replace_na(ENTRANCES_AVG, median(ENTRANCES_AVG, na.rm = T)), FLOORSMAX_AVG = replace_na(FLOORSMAX_AVG, median(FLOORSMAX_AVG, na.rm = T)), FLOORSMIN_AVG = replace_na(FLOORSMIN_AVG, median(FLOORSMIN_AVG, na.rm = T)), LANDAREA_AVG = replace_na(LANDAREA_AVG, median(LANDAREA_AVG, na.rm = T)), LIVINGAPARTMENTS_AVG = replace_na(LIVINGAPARTMENTS_AVG, median(LIVINGAPARTMENTS_AVG, na.rm = T)), LIVINGAREA_AVG = replace_na(LIVINGAREA_AVG, median(LIVINGAREA_AVG, na.rm = T)), NONLIVINGAPARTMENTS_AVG = replace_na(NONLIVINGAPARTMENTS_AVG, median(NONLIVINGAPARTMENTS_AVG, na.rm = T)), NONLIVINGAREA_AVG = replace_na(NONLIVINGAREA_AVG, median(NONLIVINGAREA_AVG, na.rm = T)), APARTMENTS_MODE = replace_na(APARTMENTS_MODE, median(APARTMENTS_MODE, na.rm = T)), BASEMENTAREA_MODE = replace_na(BASEMENTAREA_MODE, median(BASEMENTAREA_MODE, na.rm = T)), YEARS_BEGINEXPLUATATION_MODE = replace_na(YEARS_BEGINEXPLUATATION_MODE, median(YEARS_BEGINEXPLUATATION_MODE, na.rm = T)), YEARS_BUILD_MODE = replace_na(YEARS_BUILD_MODE, median(YEARS_BUILD_MODE, na.rm = T)), FLOORSMAX_MODE = replace_na(FLOORSMAX_MODE, median(FLOORSMAX_MODE, na.rm = T)), FLOORSMIN_MODE = replace_na(FLOORSMIN_MODE, median(FLOORSMIN_MODE, na.rm = T)), LANDAREA_MODE = replace_na(LANDAREA_MODE, median(LANDAREA_MODE, na.rm = T)), LIVINGAPARTMENTS_MODE = replace_na(LIVINGAPARTMENTS_MODE, median(LIVINGAPARTMENTS_MODE, na.rm = T)), LIVINGAREA_MODE = replace_na(LIVINGAREA_MODE, median(LIVINGAREA_MODE, na.rm = T)), NONLIVINGAPARTMENTS_MODE = replace_na(NONLIVINGAPARTMENTS_MODE, median(NONLIVINGAPARTMENTS_MODE, na.rm = T)), NONLIVINGAREA_MODE = replace_na(NONLIVINGAREA_MODE, median(NONLIVINGAREA_MODE, na.rm = T)), APARTMENTS_MEDI = replace_na(APARTMENTS_MEDI, median(APARTMENTS_MEDI, na.rm = T)), BASEMENTAREA_MEDI = replace_na(BASEMENTAREA_MEDI, median(BASEMENTAREA_MEDI, na.rm = T)), YEARS_BEGINEXPLUATATION_MEDI = replace_na(YEARS_BEGINEXPLUATATION_MEDI, median(YEARS_BEGINEXPLUATATION_MEDI, na.rm = T)), YEARS_BUILD_MEDI = replace_na(YEARS_BUILD_MEDI, median(YEARS_BUILD_MEDI, na.rm = T)), COMMONAREA_MEDI = replace_na(COMMONAREA_MEDI, median(COMMONAREA_MEDI, na.rm = T)), ENTRANCES_MEDI = replace_na(ENTRANCES_MEDI, median(ENTRANCES_MEDI, na.rm = T)), FLOORSMAX_MEDI = replace_na(FLOORSMAX_MEDI, median(FLOORSMAX_MEDI, na.rm = T)), FLOORSMIN_MEDI = replace_na(FLOORSMIN_MEDI, median(FLOORSMIN_MEDI, na.rm = T)), LANDAREA_MEDI = replace_na(LANDAREA_MEDI, median(LANDAREA_MEDI, na.rm = T)), LIVINGAPARTMENTS_MEDI = replace_na(LIVINGAPARTMENTS_MEDI, median(LIVINGAPARTMENTS_MEDI, na.rm = T)), LIVINGAREA_MEDI = replace_na(LIVINGAREA_MEDI, median(LIVINGAREA_MEDI, na.rm = T)), NONLIVINGAPARTMENTS_MEDI = replace_na(NONLIVINGAPARTMENTS_MEDI, median(NONLIVINGAPARTMENTS_MEDI, na.rm = T)), NONLIVINGAREA_MEDI = replace_na(NONLIVINGAREA_MEDI, median(NONLIVINGAREA_MEDI, na.rm = T)), TOTALAREA_MODE = replace_na(TOTALAREA_MODE, median(TOTALAREA_MODE, na.rm = T)), ENTRANCES_MODE = replace_na(ENTRANCES_MODE, median(ENTRANCES_MODE, na.rm = T)))
+
+#Replacing values with zero: Many people wouldn't live in a building with an elevator or a common area, so it would make sense to replace these missing values with zero. That said, the median would likely be close to zero anyway. 
+
+train_samp <- train_samp |> 
+mutate(ELEVATORS_AVG = replace_na(data = ELEVATORS_AVG, replace = 0), COMMONAREA_MODE = replace_na(data = COMMONAREA_MODE, replace = 0), ELEVATORS_MODE = replace_na(data = ELEVATORS_MODE, replace = 0))
+
+```
+
+
+## Replacing Other Missing Values
+
+```{r counting missing}
+
+#counting the missing values
+
+train_samp |> count(FONDKAPREMONT_MODE) |> group_by(n) #Will replace NAs with 'not specified.'
+train_samp |> count(HOUSETYPE_MODE) |> group_by(n) #Will replace NAs with 'block of flats'
+train_samp |> count(WALLSMATERIAL_MODE) |> group_by(n) #As more data is missing than is present, it may be wise not to replace missing values.
+train_samp |> count(EMERGENCYSTATE_MODE) |> group_by(n) #Will replace NAs with 'No'
+train_samp |> count(OCCUPATION_TYPE) |> group_by(n) #Will replace NAs with 'other'
+```
+
+```{r replacing other missing values}
+
+#Here we will replace missing categorical values and other not-so-obvious values.
+
+train_samp <- train_samp |> 
+mutate(FONDKAPREMONT_MODE = replace_na(data = FONDKAPREMONT_MODE, replace = "not specified"), HOUSETYPE_MODE = replace_na(data = HOUSETYPE_MODE, replace = "block of flats"), EMERGENCYSTATE_MODE = replace_na(data = EMERGENCYSTATE_MODE, replace = "No"))
+
+train_samp <- train_samp |> 
+mutate(ELEVATORS_MEDI = replace_na(data = ELEVATORS_MEDI, replace = 0), DAYS_LAST_PHONE_CHANGE = replace_na(data = DAYS_LAST_PHONE_CHANGE, replace = 0), AMT_ANNUITY = replace_na(AMT_ANNUITY, median(AMT_ANNUITY, na.rm = T)), ELEVATORS_MODE = replace_na(data = ELEVATORS_MODE, replace = 0), CNT_FAM_MEMBERS = replace_na(data = CNT_FAM_MEMBERS, replace = 0))
+
+train_samp <- train_samp |> 
+  mutate(OCCUPATION_TYPE = replace_na(OCCUPATION_TYPE, "other"), NAME_TYPE_SUITE = replace_na(NAME_TYPE_SUITE, "other"), WALLSMATERIAL_MODE = replace_na(WALLSMATERIAL_MODE, "other"))
+
+# It should be noted that for the value DAYS_EMPLOYED, the positive values are not possible:
+
+train_samp[train_samp$DAYS_EMPLOYED < 0, "DAYS_EMPLOYED"] <- 0
+
+```
+
+
+## Removing Zero-Variance and Highly Correlated Variables:
+
+Here we will remove variables that are relatively constant and unlikely to affect the target variable, along with variables that fluxuate with other variables. 
+
+```{r remove zero variance}
+# Separate numeric and non-numeric columns
+numeric_vars <- train_samp[sapply(train_samp, is.numeric)]
+non_numeric_vars <- train_samp[sapply(train_samp, Negate(is.numeric))]
+
+# Remove zero variance columns - can also try nearZeroVar()
+numeric_vars <- numeric_vars[, apply(numeric_vars, 2, var, na.rm = TRUE) > 0, drop = FALSE]
+
+# Compute the correlation matrix for numeric variables
+cor_matrix <- cor(numeric_vars)
+
+# Find highly correlated variables (absolute correlation > 0.9)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9)
+
+# Remove highly correlated numeric variables
+filtered_numeric_vars <- numeric_vars[, -highly_correlated, drop = FALSE]
+
+# Combine back with non-numeric variables
+train_samp2 <- cbind(non_numeric_vars, filtered_numeric_vars)
+
+```
+
+
+# Characters to Factors and Reviewing Changes
+
+In this section we change character variables to factors so the models can operate more efficiently.
+
+```{r factorizing}
+
+train_samp2 <- train_samp2 |>
+  mutate_if(is.character, function(x) factor(x))#factoring data
+
+ncol(train_samp2)
+sum(is.na(train_samp2))
+sum(is.character(train_samp2))
+```
+
+# New Data Sources:
+
+Because Home Credit is examing data unreleated to credit score, we will analyze additional files to find relevant predictors and join them to the main file on the variable SK_ID_CURR.
+
+## Bureau
+
+```{r bureau}
+
+#Loading and examining bureau data
+
+bureau <- read_csv("bureau.csv")
+
+#Replacing missing values with 0:
+
+bureau <- bureau |> 
+mutate(DAYS_CREDIT_ENDDATE = replace_na(data = DAYS_CREDIT_ENDDATE, replace = 0), AMT_CREDIT_MAX_OVERDUE = replace_na(data = AMT_CREDIT_MAX_OVERDUE, replace = 0), AMT_CREDIT_SUM_DEBT = replace_na(data = AMT_CREDIT_SUM_DEBT, replace = 0), AMT_CREDIT_SUM_LIMIT = replace_na(data = AMT_CREDIT_SUM_LIMIT, replace = 0), AMT_ANNUITY = replace_na(data = AMT_ANNUITY, replace = 0))
+
+#DAYS_ENDDATE_FACT is missing information, but it applies only to closed credit. May be best to ignore this column.
+
+#Selecting columns to join with main data:
+bureau_join <- bureau |> group_by(SK_ID_CURR) |> summarise(Total_CREDIT_DAY_OVERDUE = sum(CREDIT_DAY_OVERDUE), Total_AMT_CREDIT_SUM_DEBT = sum(AMT_CREDIT_SUM_DEBT), Total_AMT_CREDIT_SUM_OVERDUE = sum(AMT_CREDIT_SUM_OVERDUE))
+
+
+```
+
+## Bureau_Balance
+
+
+```{r bureau balance}
+
+#loading and examining bureau balance
+
+bureau_balance <- read_csv("bureau_balance.csv", n_max = 20000)
+
+#No missing values. 
+
+
+```
+
+
+## POS_CASH_balance
+
+
+```{r pos cash balance}
+
+#loading and reviewing pos cash balance
+
+POS_CASH_balance <- read_csv("POS_CASH_balance.csv")
+
+#CNT_INSTALMENT missing values could indicate that they didn't have previous credit. Can replace with zeros:
+POS_CASH_balance <- POS_CASH_balance |> 
+mutate(CNT_INSTALMENT = replace_na(data = CNT_INSTALMENT, replace = 0), CNT_INSTALMENT_FUTURE = replace_na(data = CNT_INSTALMENT_FUTURE, replace = 0))
+
+#prepping data to merge with our training data
+
+POS_CASH_balance_join <- POS_CASH_balance |> group_by(SK_ID_CURR) |> summarise(Total_CNT_INSTALMENT_FUTURE = sum(CNT_INSTALMENT_FUTURE), Total_SK_DPD = sum(SK_DPD))
+
+```
+
+## credit_card_balance
+
+
+```{r credit card balance}
+
+#loading and reviewing credit card balance
+
+credit_card_balance <- read_csv("credit_card_balance.csv", n_max = 20000)
+
+#Replacing missing values with zero. As most of these are transactions the median may also be appropriate?
+credit_card_balance <- credit_card_balance |> 
+mutate(AMT_DRAWINGS_ATM_CURRENT = replace_na(data = AMT_DRAWINGS_ATM_CURRENT, replace = 0), AMT_DRAWINGS_OTHER_CURRENT = replace_na(data = AMT_DRAWINGS_OTHER_CURRENT, replace = 0), AMT_DRAWINGS_POS_CURRENT = replace_na(data = AMT_DRAWINGS_POS_CURRENT, replace = 0), AMT_INST_MIN_REGULARITY = replace_na(data = AMT_INST_MIN_REGULARITY, replace = 0), AMT_PAYMENT_CURRENT = replace_na(data = AMT_PAYMENT_CURRENT, replace = 0), CNT_DRAWINGS_ATM_CURRENT = replace_na(data = CNT_DRAWINGS_ATM_CURRENT, replace = 0), CNT_DRAWINGS_OTHER_CURRENT = replace_na(data = CNT_DRAWINGS_OTHER_CURRENT, replace = 0), CNT_DRAWINGS_POS_CURRENT = replace_na(data = CNT_DRAWINGS_POS_CURRENT, replace = 0), CNT_INSTALMENT_MATURE_CUM = replace_na(data = CNT_INSTALMENT_MATURE_CUM, replace = 0))
+
+#prepping data to merge with our training data
+
+credit_card_balance_join <- credit_card_balance |> group_by(SK_ID_CURR) |> summarise(Total_AMT_DRAWINGS_ATM_CURRENT = sum(AMT_DRAWINGS_ATM_CURRENT), total_AMT_DRAWINGS_OTHER_CURRENT = sum(AMT_DRAWINGS_OTHER_CURRENT), total_AMT_DRAWINGS_POS_CURRENT = sum(AMT_DRAWINGS_POS_CURRENT), Total_AMT_PAYMENT_CURRENT = sum(AMT_PAYMENT_CURRENT), total_CNT_DRAWINGS_ATM_CURRENT = sum(CNT_DRAWINGS_ATM_CURRENT), Total_CNT_DRAWINGS_OTHER_CURRENT = sum(CNT_DRAWINGS_OTHER_CURRENT), total_CNT_DRAWINGS_POS_CURRENT = sum(CNT_DRAWINGS_POS_CURRENT), Total_CNT_INSTALMENT_MATURE_CUM = sum(CNT_INSTALMENT_MATURE_CUM))
+
+
+```
+
+
+## previous_application
+
+
+```{r previous application}
+
+#loading and reviewing previous application.
+
+previous_application <- read_csv("previous_application.csv")
+
+#Replacing missing values with zero. As most of these are transactions the median may also be appropriate?
+previous_application <- previous_application |> 
+mutate(AMT_ANNUITY = replace_na(data = AMT_ANNUITY, replace = 0), AMT_APPLICATION = replace_na(data = AMT_APPLICATION, replace = 0), AMT_CREDIT = replace_na(data = AMT_CREDIT, replace = 0), AMT_DOWN_PAYMENT = replace_na(data = AMT_DOWN_PAYMENT, replace = 0), AMT_GOODS_PRICE = replace_na(data = AMT_GOODS_PRICE, replace = 0), RATE_DOWN_PAYMENT = replace_na(data = RATE_DOWN_PAYMENT, replace = 0), RATE_INTEREST_PRIMARY = replace_na(data = RATE_INTEREST_PRIMARY, replace = 0), RATE_INTEREST_PRIVILEGED = replace_na(data = RATE_INTEREST_PRIVILEGED, replace = 0), CNT_PAYMENT = replace_na(data = CNT_PAYMENT, replace = 0), NFLAG_INSURED_ON_APPROVAL = replace_na(data = NFLAG_INSURED_ON_APPROVAL, replace = 0))
+
+#Replacing missing values in the NAME_TYPE_SUITE
+previous_application <- previous_application |> 
+mutate(NAME_TYPE_SUITE = replace_na(data = NAME_TYPE_SUITE, replace = "Unaccompanied"))
+       
+#These attributes can either be removed or replaced with the median: DAYS_FIRST_DRAWING, DAYS_FIRST_DUE, DAYS_LAST_DUE_1ST_VERSION, DAYS_LAST_DUE, DAYS_TERMINATION
+
+#prepping data to merge with our training data
+
+previous_application_join <- previous_application |> group_by(SK_ID_CURR) |> summarise(Total_AMT_ANNUITY = sum(AMT_ANNUITY), Total_AMT_APPLICATION = sum(AMT_APPLICATION), total_AMT_CREDIT = sum(AMT_CREDIT), total_AMT_DOWN_PAYMENT = sum(AMT_DOWN_PAYMENT), total_AMT_GOODS_PRICE = sum(AMT_GOODS_PRICE), total_RATE_DOWN_PAYMENT = sum(RATE_DOWN_PAYMENT), avg_RATE_INTEREST_PRIMARY = mean(RATE_INTEREST_PRIMARY), total_CNT_PAYMENT
+ = sum(CNT_PAYMENT))
+
+
+```
+
+
+## installments_payments
+
+
+```{r install payments}
+
+#loading and reviewing installments payments
+
+installments_payments <- read_csv(file = "installments_payments.csv")
+
+
+#The information most important in here is the difference between due date and payment date. Rather than changing the format, we can just find the difference. We can do the same for prescribed payments vs actual payments: 
+installments_payments <- installments_payments |> mutate(days_late = DAYS_INSTALMENT - DAYS_ENTRY_PAYMENT, payment_diff = AMT_INSTALMENT - AMT_PAYMENT)
+
+#prepping data to merge with our training data
+
+install_payments <- installments_payments |> group_by(SK_ID_CURR) |> summarise(avg_days_late = mean(days_late), avg_payment_diff = mean(payment_diff))
+
+
+```
+
+
+# Merging Data Sources
+
+As a complete data file would be massive, only a selected few data sources will be combined based on likelihood of influence.
+
+```{r merging data sources}
+
+
+#merging only a select number of sources as to not crash the system. 
+
+merge(x = train_samp2, y = previous_application_join, by = "SK_ID_CURR", all.x = TRUE) -> df
+merge(x = df, y = POS_CASH_balance_join, by = "SK_ID_CURR", all.x = TRUE) -> df
+merge(x = df, y = install_payments, by = "SK_ID_CURR", all.x = TRUE) -> df
+merge(x = df, y = bureau_join, by = "SK_ID_CURR", all.x = TRUE) -> df
+
+
+```
+
+Missing data here implies there are no records - will be replaced with zero:
+
+## Replacing missing values in final data set
+
+```{r replacing missing values}
+
+#replacing missing values with zero as missing data is most likely due to missing records.
+
+df <- df|> 
+mutate(
+avg_RATE_INTEREST_PRIMARY = replace_na(data = avg_RATE_INTEREST_PRIMARY, replace = 0), 
+total_CNT_PAYMENT = replace_na(data = total_CNT_PAYMENT, replace = 0), 
+Total_CNT_INSTALMENT_FUTURE = replace_na(data = Total_CNT_INSTALMENT_FUTURE, replace = 0), 
+Total_SK_DPD = replace_na(data = Total_SK_DPD, replace = 0), 
+avg_days_late = replace_na(data = avg_days_late, replace = 0), 
+avg_payment_diff = replace_na(data = avg_payment_diff, replace = 0), 
+Total_AMT_ANNUITY = replace_na(data = Total_AMT_ANNUITY, replace = 0), 
+Total_AMT_APPLICATION = replace_na(data = Total_AMT_APPLICATION, replace = 0), 
+total_AMT_CREDIT = replace_na(data = total_AMT_CREDIT, replace = 0), 
+total_AMT_DOWN_PAYMENT = replace_na(data = total_AMT_DOWN_PAYMENT, replace = 0), 
+total_AMT_GOODS_PRICE = replace_na(data = total_AMT_GOODS_PRICE, replace = 0), 
+total_RATE_DOWN_PAYMENT	= replace_na(data = total_RATE_DOWN_PAYMENT, replace = 0),
+Total_CREDIT_DAY_OVERDUE = replace_na(data = Total_CREDIT_DAY_OVERDUE, replace = 0),
+Total_AMT_CREDIT_SUM_DEBT = replace_na(data = Total_AMT_CREDIT_SUM_DEBT, replace = 0),
+Total_AMT_CREDIT_SUM_OVERDUE = replace_na(data = Total_AMT_CREDIT_SUM_OVERDUE, replace = 0)
+)
+
+```
+
+## Checking again for Zero-Variance and Highly Correlated Variables:
+
+```{r removing zero variance}
+# Separate numeric and non-numeric columns
+numeric_vars <- df[sapply(df, is.numeric)]
+non_numeric_vars <- df[sapply(df, Negate(is.numeric))]
+
+# Remove zero variance columns - can also try nearZeroVar()
+numeric_vars <- numeric_vars[, apply(numeric_vars, 2, var, na.rm = TRUE) > 0, drop = FALSE]
+
+# Compute the correlation matrix for numeric variables
+cor_matrix <- cor(numeric_vars)
+
+# Find highly correlated variables (absolute correlation > 0.9)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9)
+
+# Remove highly correlated numeric variables
+filtered_numeric_vars <- numeric_vars[, -highly_correlated, drop = FALSE]
+
+# Combine back with non-numeric variables
+df2 <- cbind(non_numeric_vars, filtered_numeric_vars)
+
+```
+
+## Confirming our changes
+```{r merged data review}
+
+ncol(df2)
+nrow(df2)
+sum(is.na(df2))
+sum(is.character(df2))
+
+```
+# Separating Back into Test and Train Sets
+
+Here we undo our initial merge.
+
+```{r unmerging data sources}
+
+#put selected data frames into list
+df_test <- df2 |> filter(TARGET == 2)
+df_train <- df2 |> filter(TARGET != 2)
+
+#Changing TARGET variable into a factor
+
+df_test <- df_test |>
+  mutate(TARGET = factor(TARGET))#factoring data
+
+df_train <- df_train |>
+   mutate(TARGET = factor(TARGET))#factoring data
+
+
+
+```
+
+# Sampling Test Data
+
+Here we will split the train data into two parts - 70% of the data will be used to train our models and 30% will be used to validate them.
+
+```{r splitting df_train data}
+
+# Randomly sample 70% of the rows in an object called index.
+set.seed(124)
+index <- sample(x = 1:nrow(df_train), size = nrow(df_train)*.7, replace = F)
+
+# Check
+head(index) # These are the 70% randomly sampled row numbers
+
+# Subset train using index to create a 70% train_fold
+train_fold <- df_train[index, ]
+
+# Subset the remaining rows not included in index to create a 30% validation fold
+validation_fold <- df_train[-index, ]
+
+```
+
+
+
+# Tree Model
+
+Building tree models to find most influential predictors.
+
+```{r rpart tree 1}
+
+#building the first tree model with a low info-gain threshold.
+tree_1 <- rpart(TARGET ~. -SK_ID_CURR, train_fold, method="class",control =rpart.control(minsplit =1,minbucket=1, cp=0.0001))
+
+plot(tree_1)
+
+
+```
+
+This model is very complex. We will increase the information gain threshold to make the model more readable. 
+
+```{r rpart tree 2}
+
+#building a second, less-complex tree model.
+tree_2 <- rpart(TARGET ~. -SK_ID_CURR, train_fold, method="class",control =rpart.control(minsplit =1,minbucket=1, cp=0.0003))
+
+rpart.plot(tree_2)
+
+
+```
+
+
+# Predictions
+
+Here we will generate predictions based on the tree models.
+
+```{r generating predictions for train set}
+
+#generating predictions for train sets
+tree_1_train_predictions <- predict(tree_1,train_fold)
+tree_2_train_predictions <- predict(tree_2,train_fold)
+```
+
+```{r generating predictions for validation set}
+
+#generating predictions for test sets
+tree_1_test_predictions <- predict(tree_1,validation_fold)
+tree_2_test_predictions <- predict(tree_2,validation_fold)
+```
+
+## Confusion Matrices
+
+These help us determine the accuracy of the tree models on the train and validation data.
+
+```{r model confusion matrices}
+
+#confusion matrices for train data
+mmetric(train_fold$TARGET, tree_1_train_predictions, metric="CONF")
+mmetric(validation_fold$TARGET, tree_1_test_predictions, metric="CONF")
+
+mmetric(train_fold$TARGET, tree_2_train_predictions, metric="CONF")
+mmetric(validation_fold$TARGET, tree_2_test_predictions, metric="CONF")
+```
+
+
+```{r accuracy chart tree 1}
+
+# generating an accuracy chart for tree 1
+
+mmetric(train_fold$TARGET, tree_1_train_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+mmetric(validation_fold$TARGET, tree_1_test_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+
+
+```
+
+The first tree model has 93.5% accuracy on the train data and 91% accuracy on the validation data. 
+
+```{r accuracy chart tree 2}
+
+# generating an accuracy chart for tree 2
+
+mmetric(train_fold$TARGET, tree_2_train_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+mmetric(validation_fold$TARGET, tree_2_test_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+
+
+```
+The second model has a higher threshold of information gain for each mode and is thus not as complex as the first model. It only has 92% accuracy on the train data compared to 93.5% for the first model, but it may be a better model overall. The first model may have overfit the train data as the second model performs better with the validation data (91.8% to 91%) We'll use these predictors in the second tree model for the logistical model.
+
+##Model Features
+
+This is a list of the most important features of the second tree model.
+
+```{r rpart tree importance}
+#Finding the most important features of the tree model, as the graph is hard to interpret and the tree diagram is very long.
+
+tree_2$variable.importance
+
+```
+
+# Logistical Model
+
+As gender and age are considered protected values they will be removed from the model.
+
+```{r log model}
+
+#building the log model based on the tree_2 predictors
+reg_keg <- glm(TARGET ~ EXT_SOURCE_3 + EXT_SOURCE_2 + ORGANIZATION_TYPE + OCCUPATION_TYPE + avg_days_late + log(AMT_CREDIT) + AMT_ANNUITY + Total_CNT_INSTALMENT_FUTURE + total_AMT_CREDIT + Total_CREDIT_DAY_OVERDUE + Total_AMT_CREDIT_SUM_OVERDUE + total_CNT_PAYMENT + total_AMT_DOWN_PAYMENT + avg_payment_diff + WEEKDAY_APPR_PROCESS_START + total_RATE_DOWN_PAYMENT + NAME_FAMILY_STATUS + REGION_POPULATION_RELATIVE + log(AMT_INCOME_TOTAL) + YEARS_BEGINEXPLUATATION_MODE + Total_AMT_CREDIT_SUM_DEBT + DAYS_REGISTRATION + CNT_FAM_MEMBERS + LIVINGAREA_MODE*APARTMENTS_MODE + NAME_HOUSING_TYPE + Total_SK_DPD + AMT_REQ_CREDIT_BUREAU_YEAR + FLOORSMAX_MODE + TOTALAREA_MODE + YEARS_BUILD_MODE + ELEVATORS_MODE + NONLIVINGAREA_MODE*NONLIVINGAPARTMENTS_MODE -SK_ID_CURR, family = "binomial", data = train_fold) 
+
+summary(reg_keg, digits=2)
+
+```
+
+## Validation
+
+```{r generating predictions based on the glm model}
+
+#generating predictions for train sets
+glm_1_train_predictions <- predict(reg_keg,train_fold)
+
+
+#generating predictions for test sets
+glm_1_test_predictions <- predict(reg_keg,validation_fold)
+
+```
+
+```{r accuracy chart glm}
+
+# generating an accuracy chart for tree 1
+
+mmetric(train_fold$TARGET, glm_1_train_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+mmetric(validation_fold$TARGET, glm_1_test_predictions, metric=c("F1","ACC","PRECISION","RECALL"))
+
+
+```
+The log regression model appears to perform only slightly better than the tree model with a 91.9% accuracy compared to 91.8%. 
+
+## Area under the Curve
+
+```{r area under the curve for the model}
+
+roc_object <- roc(validation_fold$TARGET, glm_1_test_predictions)
+
+plot(roc_object)
+
+roc_object
+
+```
+# Final Predictions
+
+```{r generate test predictions}
+
+predictions_full <- predict(reg_keg, df_test, type = "response")
+
+submission <- df_test |> 
+  select(SK_ID_CURR) |> 
+  mutate(TARGET = predictions_full)
+
+submission$SK_ID_CURR <- as.integer(submission$SK_ID_CURR)
+
+# Check
+str(submission)
+
+# write to csv
+write.csv(submission, "submission.csv", row.names = F)
+```
+
+# Final Results
+
+In-sample performance of the regression model is 91.8% and the out of sample-performance is 73.3%. Kaggle Score: 0.72385 - this translates to an accuracy of 72.4%. As the top Kaggle score is around 0.8, there is obviously room for improvement. 
+
+Because of the sheer amount of data, a good portion of it had to be sifted and filtered in order to find the most important factors. Even then, the graph of the first decision tree model was far too complex to interpret.
+
+The top two predictors for the TARGET variable were EXT_SOURCE_3 and EXT_SOURCE_2 indicating that the scores HomeCredit received from external data sources were valuable information. The next group of predictors were related to occupation, which does make sense as we would expect to see a difference across occupations in lending. The group after this takes the client's credit history into account, examining the status of previous loans and late payments, which could also be natural predictors, and even red-flags for potential lenders. As much of this data came from files outside of the main data frames, it's clear that extending our analysis was worth the effort.
+
+It is not surprising to find that some of the least valuable predictors dealt with the client's living space. As there are very large houses in destitute regions of the country, and very small apartments in some of the most wealthy regions, and vice-versa, any correlation with these variables to the target would have been difficult to determine.
+
+
+
+
