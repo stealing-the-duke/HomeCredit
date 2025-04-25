@@ -8,7 +8,7 @@ In our modelling process we first examined the overall structure of the data and
 
 In-sample performance of the regression model is 91.8% and the out of sample-performance is 73.3% with a Kaggle Score of 0.72385 - this translates to an accuracy of 72.4%. As the top Kaggle score is around 0.8, there is obviously room for improvement, but the metrics are still fairly decent. That said, the recall and sensitivity is lower than we would like, indicating a definite need for further aggregation.
 
-Because of the sheer amount of data, a good portion of it had to be sifted and filtered in order to find the most important factors. Even then, the graph of the first decision tree model was far too complex to interpret. Several factors were removed, as including them in prediction models could be considered discriminatory.
+Because of the sheer amount of data, a good portion of it had to be sifted and filtered in order to find the most important factors. Even then, the graph of the first decision tree model took a very long time to generate and was far too complex to interpret.
 
 The top two predictors for the TARGET variable were EXT_SOURCE_3 and EXT_SOURCE_2 indicating that the scores HomeCredit received from external data sources were quite valuable. The next group of predictors were related to occupation and income, which is what we would expect to see. The group after this takes the client's credit history into account, examining the status of previous loans and late payments, which could also be natural predictors.
 
